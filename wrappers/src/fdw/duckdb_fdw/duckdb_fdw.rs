@@ -318,10 +318,12 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
                     .collect(),
             };
 
+            // NOTE: We don't do any munging of the postgres table names because
+            // the pg code will ignore CREATE FOREIGN TABLE statements that don't target
+            // the table names specified in the IMPORT FOREIGN SCHEMA statement.
             filtered_tables
                 .iter()
-                .map(|t| format!("{db_name}.{schema}.{t}"))
-                .map(|t| (t.clone(), t.replace(".", "_")))
+                .map(|t| (format!("{db_name}.{schema}.{t}"), t.clone()))
                 .collect()
         } else {
             let tables = require_option_or("tables", &import_stmt.options, "")
@@ -358,7 +360,6 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
 
         if cfg!(debug_assertions) {
             log_debug1(&format!("Table DDL: {:?}", ret));
-            notice!("Table DDL: {:?}", ret);
         }
 
         Ok(ret)

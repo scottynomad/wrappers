@@ -179,7 +179,7 @@ impl ServerType {
         };
         let mut ret = String::default();
         for (key, value) in settings {
-            ret.push_str(&format!("set {key}='{value}';"));
+            ret.push_str(&format!("set {key}='{0}';", value.replace("'", "''")));
         }
 
         ret
@@ -212,7 +212,7 @@ impl ServerType {
                 )
             }
             Self::MotherDuck => {
-                let database = require_option("database", svr_opts)?;
+                let database = require_option("database", svr_opts)?.replace("'", "''");
                 let db_name = self.as_str();
                 format!("attach 'md:{database}' as {db_name};")
             }
