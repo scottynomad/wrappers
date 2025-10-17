@@ -1,5 +1,6 @@
 use crate::stats;
 use duckdb::{self, Connection};
+use pgrx::notice;
 use pgrx::pg_sys;
 use std::collections::HashMap;
 use std::path::Path;
@@ -112,6 +113,7 @@ impl DuckdbFdw {
         tbl_duckdb: &str,
         tbl_pg: &str,
         server_name: &str,
+        local_schema: &str,
         is_strict: bool,
     ) -> DuckdbFdwResult<String> {
         let mut fields: Vec<String> = Vec::new();
@@ -138,8 +140,8 @@ impl DuckdbFdw {
 
         let ret = if !fields.is_empty() {
             format!(
-                r#"create foreign table if not exists {} ({})
-                server {} options (table '{}')"#,
+                r#"create foreign table if not exists {}.{} ({}) server {} options (table '{}');"#,
+                local_schema,
                 tbl_pg,
                 fields.join(","),
                 server_name,
@@ -302,20 +304,23 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
             let tbls = stmt
                 .query_map([db_name, &schema], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
-            tables.extend(tbls.into_iter().map(|t| format!("{db_name}.{schema}.{t}")));
+            tables.extend(tbls);
 
-            let tables_option = require_option_or("tables", &import_stmt.options, "")
-                .split(",")
-                .map(|t| t.trim())
-                .filter(|t| !t.is_empty())
-                .map(|t| t.to_string())
-                .collect::<Vec<_>>();
-            if !tables_option.is_empty() {
-                tables.retain(|t| tables_option.contains(&t));
-            }
+            let filtered_tables = match import_stmt.list_type {
+                ImportSchemaType::FdwImportSchemaAll => tables,
+                ImportSchemaType::FdwImportSchemaLimitTo => tables
+                    .into_iter()
+                    .filter(|t| import_stmt.table_list.contains(&t))
+                    .collect(),
+                ImportSchemaType::FdwImportSchemaExcept => tables
+                    .into_iter()
+                    .filter(|t| !import_stmt.table_list.contains(&t))
+                    .collect(),
+            };
 
-            tables
+            filtered_tables
                 .iter()
+                .map(|t| format!("{db_name}.{schema}.{t}"))
                 .map(|t| (t.clone(), t.replace(".", "_")))
                 .collect()
         } else {
@@ -341,9 +346,19 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
 
         // get each table DDL
         for (tbl_duckdb, tbl_pg) in tables {
-            let ddl =
-                self.get_table_ddl(&tbl_duckdb, &tbl_pg, &import_stmt.server_name, is_strict)?;
+            let ddl = self.get_table_ddl(
+                &tbl_duckdb,
+                &tbl_pg,
+                &import_stmt.server_name,
+                &import_stmt.local_schema,
+                is_strict,
+            )?;
             ret.push(ddl);
+        }
+
+        if cfg!(debug_assertions) {
+            log_debug1(&format!("Table DDL: {:?}", ret));
+            notice!("Table DDL: {:?}", ret);
         }
 
         Ok(ret)
