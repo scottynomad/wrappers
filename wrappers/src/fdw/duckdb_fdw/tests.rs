@@ -83,12 +83,6 @@ mod tests {
                 &[],
             )
             .unwrap();
-            c.update(
-                r#"IMPORT FOREIGN SCHEMA "md_schema" LIMIT TO ("my_table") FROM SERVER duckdb_server_motherduck INTO duckdb"#,
-                None,
-                &[],
-            )
-            .unwrap();
             let results = c
                 .select(
                     "SELECT * FROM duckdb.s3_0_test_data order by name",

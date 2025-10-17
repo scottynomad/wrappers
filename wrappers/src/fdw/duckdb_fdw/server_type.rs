@@ -65,7 +65,7 @@ impl ServerType {
         matches!(self, Self::MotherDuck)
     }
 
-    pub(super) fn get_duckdb_extension(&self) -> &'static str {
+    pub(super) fn get_duckdb_extension_sql(&self) -> &'static str {
         match self {
             Self::Iceberg | Self::S3Tables | Self::R2Catalog | Self::Polaris | Self::Lakekeeper => {
                 "install iceberg;load iceberg;"
@@ -159,11 +159,15 @@ impl ServerType {
     pub(super) fn get_settings_sql(&self, svr_opts: &ServerOptions) -> String {
         let settings: Vec<(&str, &str)> = match self {
             Self::MotherDuck => {
-                let token = require_option("motherduck_token", svr_opts)
-                    .expect("motherduck_token is required");
+                let token = if svr_opts.contains_key("vault_motherduck_token") {
+                    get_vault_secret(svr_opts.get("vault_motherduck_token").unwrap())
+                } else {
+                    require_option("motherduck_token", svr_opts)
+                }
+                .expect("motherduck_token is required");
                 vec![
-                    ("motherduck_token", token),
-                    ("motherduck_attach_mode", "single"),
+                    ("motherduck_token", format!("'{}'", token.replace("'", "''")),
+                    ("motherduck_attach_mode", "'single'"),
                     ("allow_community_extensions", "false"),
                     // Has the same effect as below, disables the local filesystem and locks the config.
                     ("motherduck_saas_mode", "true"),
@@ -171,7 +175,7 @@ impl ServerType {
             }
             _ => {
                 vec![
-                    ("disabled_filesystems", "LocalFileSystem"),
+                    ("disabled_filesystems", "'LocalFileSystem'"),
                     ("allow_community_extensions", "false"),
                     ("lock_configuration", "true"),
                 ]
@@ -179,7 +183,7 @@ impl ServerType {
         };
         let mut ret = String::default();
         for (key, value) in settings {
-            ret.push_str(&format!("set {key}='{0}';", value.replace("'", "''")));
+            ret.push_str(&format!("set {key}={0};", ));
         }
 
         ret
@@ -194,7 +198,7 @@ impl ServerType {
                     "
                     attach '{arn}' as {db_name} (
                         type iceberg,
-                        endpoint_type s3_tables  
+                        endpoint_type s3_tables
                     );"
                 )
             }

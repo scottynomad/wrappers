@@ -28,11 +28,12 @@ impl DuckdbFdw {
 
     fn init_duckdb(&self) -> DuckdbFdwResult<()> {
         let sql_batch = String::default()
-            + &self.svr_type.get_duckdb_extension()
+            + &self.svr_type.get_duckdb_extension_sql()
             // security tips: https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview
             + &self.svr_type.get_settings_sql(&self.svr_opts)
             + &self.svr_type.get_create_secret_sql(&self.svr_opts)
             + &self.svr_type.get_attach_sql(&self.svr_opts)?;
+
         // execute_batch() won't raise error when one of the statements failed,
         // so we execute each sql separately
         for sql in sql_batch
@@ -138,7 +139,8 @@ impl DuckdbFdw {
 
         let ret = if !fields.is_empty() {
             format!(
-                r#"create foreign table if not exists {} ({}) server {} options (table '{}');"#,
+                r#"create foreign table if not exists {} ({})
+                server {} options (table '{}')"#,
                 tbl_pg,
                 fields.join(","),
                 server_name,
@@ -352,10 +354,6 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
             let ddl =
                 self.get_table_ddl(&tbl_duckdb, &tbl_pg, &import_stmt.server_name, is_strict)?;
             ret.push(ddl);
-        }
-
-        if cfg!(debug_assertions) {
-            log_debug1(&format!("Table DDL: {:?}", ret));
         }
 
         Ok(ret)
