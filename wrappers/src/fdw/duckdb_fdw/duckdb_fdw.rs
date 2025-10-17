@@ -1,6 +1,5 @@
 use crate::stats;
 use duckdb::{self, Connection};
-use pgrx::notice;
 use pgrx::pg_sys;
 use std::collections::HashMap;
 use std::path::Path;
