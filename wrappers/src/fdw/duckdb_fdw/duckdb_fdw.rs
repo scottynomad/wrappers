@@ -28,16 +28,11 @@ impl DuckdbFdw {
 
     fn init_duckdb(&self) -> DuckdbFdwResult<()> {
         let sql_batch = String::default()
-            + if self.svr_type.is_iceberg() { "install iceberg;load iceberg;" } else { "" }
+            + &self.svr_type.get_duckdb_extension()
             // security tips: https://duckdb.org/docs/stable/operations_manual/securing_duckdb/overview
-            + "
-                set disabled_filesystems = 'LocalFileSystem';
-                set allow_community_extensions = false;
-                set lock_configuration = true;
-            "
+            + &self.svr_type.get_settings_sql(&self.svr_opts)
             + &self.svr_type.get_create_secret_sql(&self.svr_opts)
             + &self.svr_type.get_attach_sql(&self.svr_opts)?;
-
         // execute_batch() won't raise error when one of the statements failed,
         // so we execute each sql separately
         for sql in sql_batch
@@ -285,6 +280,38 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
                     .query_map([db_name, &schema], |row| row.get::<_, String>(0))?
                     .collect::<Result<Vec<_>, _>>()?;
                 tables.extend(tbls.into_iter().map(|t| format!("{db_name}.{schema}.{t}")));
+            }
+
+            tables
+                .iter()
+                .map(|t| (t.clone(), t.replace(".", "_")))
+                .collect()
+        } else if self.svr_type.is_sql_like() {
+            let db_name = self.svr_type.as_str();
+            let schema = import_stmt.remote_schema;
+            let mut tables = Vec::new();
+
+            let sql = "
+                    select table_name
+                    from information_schema.tables
+                    where table_catalog = ?
+                      and table_schema = ?
+                    order by table_name
+                ";
+            let mut stmt = self.conn.prepare(sql)?;
+            let tbls = stmt
+                .query_map([db_name, &schema], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            tables.extend(tbls.into_iter().map(|t| format!("{db_name}.{schema}.{t}")));
+
+            let tables_option = require_option_or("tables", &import_stmt.options, "")
+                .split(",")
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>();
+            if !tables_option.is_empty() {
+                tables.retain(|t| tables_option.contains(&t));
             }
 
             tables
