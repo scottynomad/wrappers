@@ -113,7 +113,6 @@ impl DuckdbFdw {
         tbl_duckdb: &str,
         tbl_pg: &str,
         server_name: &str,
-        local_schema: &str,
         is_strict: bool,
     ) -> DuckdbFdwResult<String> {
         let mut fields: Vec<String> = Vec::new();
@@ -140,8 +139,7 @@ impl DuckdbFdw {
 
         let ret = if !fields.is_empty() {
             format!(
-                r#"create foreign table if not exists {}.{} ({}) server {} options (table '{}');"#,
-                local_schema,
+                r#"create foreign table if not exists {} ({}) server {} options (table '{}');"#,
                 tbl_pg,
                 fields.join(","),
                 server_name,
@@ -291,37 +289,41 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
         } else if self.svr_type.is_sql_like() {
             let db_name = self.svr_type.as_str();
             let schema = import_stmt.remote_schema;
-            let mut tables = Vec::new();
 
-            let sql = "
+            let table_list = import_stmt
+                .table_list
+                .iter()
+                .map(|name| format!("'{}'", name.replace("'", "''")))
+                .collect::<Vec<_>>()
+                .join(",");
+            let table_filter = match import_stmt.list_type {
+                ImportSchemaType::FdwImportSchemaAll => "".to_string(),
+                ImportSchemaType::FdwImportSchemaLimitTo => {
+                    format!("and table_name in ({table_list})")
+                }
+                ImportSchemaType::FdwImportSchemaExcept => {
+                    format!("and table_name not in ({table_list})")
+                }
+            };
+            let query = format!(
+                "
                     select table_name
                     from information_schema.tables
                     where table_catalog = ?
                       and table_schema = ?
+                    {table_filter}
                     order by table_name
-                ";
-            let mut stmt = self.conn.prepare(sql)?;
-            let tbls = stmt
+                "
+            );
+            let mut stmt = self.conn.prepare(&query)?;
+            let tables = stmt
                 .query_map([db_name, &schema], |row| row.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
-            tables.extend(tbls);
-
-            let filtered_tables = match import_stmt.list_type {
-                ImportSchemaType::FdwImportSchemaAll => tables,
-                ImportSchemaType::FdwImportSchemaLimitTo => tables
-                    .into_iter()
-                    .filter(|t| import_stmt.table_list.contains(&t))
-                    .collect(),
-                ImportSchemaType::FdwImportSchemaExcept => tables
-                    .into_iter()
-                    .filter(|t| !import_stmt.table_list.contains(&t))
-                    .collect(),
-            };
 
             // NOTE: We don't do any munging of the postgres table names because
             // the pg code will ignore CREATE FOREIGN TABLE statements that don't target
             // the table names specified in the IMPORT FOREIGN SCHEMA statement.
-            filtered_tables
+            tables
                 .iter()
                 .map(|t| (format!("{db_name}.{schema}.{t}"), t.clone()))
                 .collect()
@@ -348,13 +350,8 @@ impl ForeignDataWrapper<DuckdbFdwError> for DuckdbFdw {
 
         // get each table DDL
         for (tbl_duckdb, tbl_pg) in tables {
-            let ddl = self.get_table_ddl(
-                &tbl_duckdb,
-                &tbl_pg,
-                &import_stmt.server_name,
-                &import_stmt.local_schema,
-                is_strict,
-            )?;
+            let ddl =
+                self.get_table_ddl(&tbl_duckdb, &tbl_pg, &import_stmt.server_name, is_strict)?;
             ret.push(ddl);
         }
 

@@ -84,7 +84,7 @@ mod tests {
             )
             .unwrap();
             c.update(
-                r#"IMPORT FOREIGN SCHEMA "md_schema" FROM SERVER duckdb_server_motherduck INTO duckdb"#,
+                r#"IMPORT FOREIGN SCHEMA "md_schema" LIMIT TO ("my_table") FROM SERVER duckdb_server_motherduck INTO duckdb"#,
                 None,
                 &[],
             )
